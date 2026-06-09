@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; height: 100vh; display: flex; flex-direction: column; background: #121212; color: #fff; font-family: sans-serif; overflow: hidden; }
+        #project-bar { display: flex; gap: 4px; padding: 6px; background: #222; align-items: center; }
+        #projectSelect, #modelSelect { flex: 1; min-width: 60px; font-size: 10px; background: #333; color: white; border: 1px solid #555; height: 30px; border-radius: 3px; }
+        .p-btn { padding: 0 6px; font-size: 10px; height: 30px; background: #0076a3; color: white; border: none; border-radius: 3px; font-weight: bold; cursor: pointer; }
+        
+        /* आपने कहा स्क्रॉल अच्छा है, तो इसे वापस लगा दिया */
+        #toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 6px; background: #1a1a1a; max-height: 250px; overflow-y: auto; border-bottom: 1px solid #333; }
+        .t-btn { height: 35px; font-size: 10px; color: #fff; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; }
+        
+        /* प्रीव्यू और एडिटर */
+        #preview-container { height: 20vh; background: #fff; position: relative; }
+        #preview { width: 100%; height: 100%; border: none; }
+        #editor { flex: 1; width: 100%; padding: 10px; background: #1e1e1e; color: #00ff00; border: none; font-family: monospace; resize: none; overflow-y: auto; }
+        
+        /* फुल स्क्रीन के लिए नया मैजिक CSS */
+        .fullscreen-active { position: fixed !important; top: 0; left: 0; width: 100vw; height: 100vh !important; z-index: 9999; }
+        #close-fs-btn { display: none; position: absolute; top: 10px; right: 10px; z-index: 10000; padding: 8px 15px; background: #c0392b; color: white; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.5); }
+    </style>
+</head>
+<body>
+    <div id="project-bar">
+        <select id="projectSelect" onchange="loadProject()"><option value="">- प्रोजेक्ट -</option></select>
+        <select id="modelSelect"><option value="gemini-1.5-pro">Pro</option><option value="gemini-2.0-flash">Flash</option></select>
+        <button class="p-btn" onclick="toggleThinking()" id="thinkingBtn">🧠 Thinking: OFF</button>
+        <button class="p-btn" onclick="saveProject()">💾 सेव</button>
+    </div>
+
+    <div id="toolbar">
+        <button class="t-btn" onclick="document.getElementById('fileInput').click()" style="background:#e67e22">📁 फाइलें (PDF/IMG)</button>
+        <button class="t-btn" onclick="startStreamingCode()" style="background:#27ae60">🚀 स्ट्रीम कोड</button>
+        <button class="t-btn" onclick="aiAnalyze()" style="background:#9b59b6">🤖 AI Analyze</button>
+        <button class="t-btn" onclick="setApiKey()" style="background:#7f8c8d">🔑 API Key</button>
+        <button class="t-btn" onclick="voiceCommand()" style="background:#2ecc71">🎙️ Voice</button>
+        <button class="t-btn" onclick="openFullScreenPreview()" style="background:#16a085">📱 Full View</button>
+        <button class="t-btn" onclick="makeURL()" style="background:#f39c12">🔗 Make URL</button>
+        <button class="t-btn" onclick="downloadHTML()" style="background:#27ae60">⬇️ DL HTML</button>
+        <button class="t-btn" onclick="exportZip()" style="background:#d35400">📦 ZIP</button>
+        <button class="t-btn" onclick="clearEditor()" style="background:#c0392b">🗑️ Clear</button>
+        <button class="t-btn" onclick="deleteProject()" style="background:#e74c3c">❌ Del</button>
+        <button class="t-btn" onclick="copyCode()" style="background:#2980b9">📋 Copy</button>
+        <button class="t-btn" onclick="takeScreenshot()" style="background:#8e44ad">📸 SS Box</button>
+        <button class="t-btn" onclick="saveFavoriteVersion()" style="background:#e84393">⭐ Fav Ver</button>
+        <button class="t-btn" onclick="geminiAudioReview()" style="background:#3498db">🔊 Audio Review</button>
+        <button class="t-btn" onclick="stopAudio()" style="background:#34495e">🛑 Stop Audio</button>
+        <button class="t-btn" onclick="pushToGitHub()" style="background:#2c3e50">🐙 GitHub Push</button>
+        <button class="t-btn" onclick="autoGitReadme()" style="background:#8e44ad">📝 Auto README</button>
+    </div>
+    
+    <input type="file" id="fileInput" multiple style="display:none" onchange="handleFileUpload(event)">
+    <div id="preview-container">
+        <button id="close-fs-btn" onclick="closeFullScreen()">❌ क्लोज फुल व्यू</button>
+        <iframe id="preview"></iframe>
+    </div>
+    <textarea id="editor" oninput="updatePreview()" placeholder="कोड यहाँ लिखें..."></textarea>
+
+    <script>
+        let isThinking = false;
+        let fileData = null;
+        let projects = JSON.parse(localStorage.getItem('myProjects') || '{"Default": ""}');
+
+        // 1. Core UI Functions
+        function toggleThinking() { isThinking = !isThinking; document.getElementById('thinkingBtn').innerText = isThinking ? "🧠 Thinking: ON" : "🧠 Thinking: OFF"; }
+        function updatePreview() { document.getElementById('preview').srcdoc = document.getElementById('editor').value; }
+        function loadProject() { document.getElementById('editor').value = projects[document.getElementById('projectSelect').value] || ""; updatePreview(); }
+        function saveProject() { const p = document.getElementById('projectSelect').value; if(p){ projects[p] = document.getElementById('editor').value; localStorage.setItem('myProjects', JSON.stringify(projects)); alert("सेव हो गया!");} }
+        function setApiKey() { const k = prompt("Gemini API Key डालें:"); if(k) localStorage.setItem('gemini_api_key', k); }
+        function updateDropdown() { const s = document.getElementById('projectSelect'); s.innerHTML = '<option value="">- प्रोजेक्ट -</option>'; for(let n in projects) s.innerHTML += `<option value="${n}">${n}</option>`; }
+        function deleteProject() { const p = document.getElementById('projectSelect').value; if(p && confirm("प्रोजेक्ट डिलीट करें?")){ delete projects[p]; localStorage.setItem('myProjects', JSON.stringify(projects)); updateDropdown(); clearEditor(); } }
+        function clearEditor() { document.getElementById('editor').value = ''; updatePreview(); }
+        function copyCode() { navigator.clipboard.writeText(document.getElementById('editor').value); alert("कोड कॉपी हो गया!"); }
+
+        // 2. Offline Utilities (Full View Fixed)
+        function openFullScreenPreview() {
+            document.getElementById('preview-container').classList.add('fullscreen-active');
+            document.getElementById('close-fs-btn').style.display = 'block';
+        }
+        function closeFullScreen() {
+            document.getElementById('preview-container').classList.remove('fullscreen-active');
+            document.getElementById('close-fs-btn').style.display = 'none';
+        }
+        
+        function makeURL() { 
+            const code = document.getElementById('editor').value;
+            const dataUrl = "data:text/html;charset=utf-8," + encodeURIComponent(code);
+            navigator.clipboard.writeText(dataUrl);
+            alert("URL कॉपी हो गया है! इसे किसी भी ब्राउज़र में पेस्ट करके खोलें।");
+        }
+        
+        function downloadHTML() { saveAs(new Blob([document.getElementById('editor').value], {type: 'text/html'}), "index.html"); }
+        function exportZip() { let zip = new JSZip(); zip.file("index.html", document.getElementById('editor').value); zip.generateAsync({type:"blob"}).then(function(content) { saveAs(content, "project.zip"); }); }
+        function takeScreenshot() { html2canvas(document.body).then(canvas => { canvas.toBlob(blob => { saveAs(blob, "screenshot.png"); }); }); }
+        function saveFavoriteVersion() { localStorage.setItem("fav_code_version", document.getElementById('editor').value); alert("यह वर्ज़न सुरक्षित कर लिया गया है!"); }
+
+        // 3. AI & APIs Functions
+        function handleFileUpload(e) {
+            const file = e.target.files[0];
+            if(!file) return;
+            const reader = new FileReader();
+            reader.onloadend = () => { fileData = { data: reader.result.split(',')[1], mime: file.type }; alert("फाइल लोड हो गई, AI इसे पढ़ सकता है!"); };
+            reader.readAsDataURL(file);
+        }
+        
+        async function callGemini(promptText) {
+            const apiKey = localStorage.getItem('gemini_api_key');
+            if(!apiKey) { alert("कृपया पहले API Key सेट करें!"); return null; }
+            let parts = [{ text: promptText }];
+            if(fileData) parts.push({ inlineData: { data: fileData.data, mimeType: fileData.mime } });
+            
+            try {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${document.getElementById('modelSelect').value}:generateContent?key=${apiKey}`, {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ contents: [{ parts: parts }] })
+                });
+                const data = await res.json();
+                return data.candidates[0].content.parts[0].text;
+            } catch(e) { alert("Gemini API Error!"); return null; }
+        }
+
+        async function startStreamingCode() {
+            alert("AI कोड लिख रहा है, कृपया प्रतीक्षा करें...");
+            const res = await callGemini("इस प्रोजेक्ट का कोड विस्तार से लिखें (HTML/CSS/JS)।");
+            if(res) { document.getElementById('editor').value += "\n" + res; updatePreview(); }
+        }
+        
+        async function aiAnalyze() {
+            const code = document.getElementById('editor').value;
+            const res = await callGemini("इस कोड में क्या गलतियाँ हैं और इसे कैसे सुधारें: \n" + code);
+            if(res) alert("AI Analysis:\n" + res);
+        }
+
+        async function geminiAudioReview() {
+            const code = document.getElementById('editor').value;
+            const res = await callGemini("इस कोड का 2 लाइन में हिंदी में रिव्यू करें: \n" + code);
+            if(res) {
+                const utterance = new SpeechSynthesisUtterance(res);
+                utterance.lang = 'hi-IN';
+                window.speechSynthesis.speak(utterance);
+                alert("AI: " + res);
+            }
+        }
+        function stopAudio() { window.speechSynthesis.cancel(); }
+
+        function voiceCommand() {
+            const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.lang = 'hi-IN';
+            recognition.onresult = async (event) => {
+                const command = event.results[0][0].transcript;
+                alert("आपने कहा: " + command);
+                const res = await callGemini(command + " - इसके लिए HTML कोड लिखें। सिर्फ कोड दें।");
+                if(res) { document.getElementById('editor').value = res; updatePreview(); }
+            };
+            recognition.start();
+        }
+
+        // 4. GitHub Functions
+        async function pushToGitHub(contentOverride, filenameOverride) {
+            const token = localStorage.getItem('github_token') || prompt("अपना GitHub Token डालें:");
+            if(!token) return; localStorage.setItem('github_token', token);
+            const repo = prompt("Repo का नाम (Owner/Repo):", localStorage.getItem('github_repo') || "");
+            if(!repo) return; localStorage.setItem('github_repo', repo);
+            
+            const content = contentOverride || document.getElementById('editor').value;
+            const filename = filenameOverride || (document.getElementById('projectSelect').value || "index") + ".html";
+            const base64 = btoa(unescape(encodeURIComponent(content)));
+            
+            try {
+                const res = await fetch(`https://api.github.com/repos/${repo}/contents/${filename}`, {
+                    method: "PUT", headers: { "Authorization": `token ${token}`, "Content-Type": "application/json" },
+                    body: JSON.stringify({ message: "Update via Mobile AI IDE", content: base64 })
+                });
+                if(res.ok) alert(filename + " GitHub पर अपलोड हो गया!"); else alert("अपलोड फेल हुआ! टोकन या रेपो नाम चेक करें।");
+            } catch(e) { alert("GitHub API Error!"); }
+        }
+
+        async function autoGitReadme() {
+            alert("AI README तैयार कर रहा है...");
+            const res = await callGemini("इस कोड का 600 शब्दों का हिंदी विवरण बुलेट पॉइंट्स में लिखें: " + document.getElementById('editor').value);
+            if(res) await pushToGitHub(res, "README.md");
+        }
+
+        // Initialization
+        updateDropdown();
+        updatePreview();
+    </script>
+</body>
+</html>
